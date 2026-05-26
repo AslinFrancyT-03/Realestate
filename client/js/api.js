@@ -5,7 +5,7 @@
 const BusinessAPI = (() => {
   const BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
     ? 'http://localhost:5000/api/business'
-    : 'https://realestate-backend.onrender.com/api/business';
+    : 'https://realestate-backend-avtv.onrender.com/api/business';
 
   async function request(url, options = {}) {
     try {
