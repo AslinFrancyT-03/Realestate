@@ -3,49 +3,47 @@ const csv = require('csv-parser');
 const Business = require('../models/Business');
 const SystemStats = require('../models/SystemStats');
 
-// Hierarchical duplicate checking helper:
-// 1. Name + Mobile Number
-// 2. Name + Website (if mobile missing)
-// 3. Name + Address (if website missing)
+// Hierarchical symmetric duplicate checker
+function areDuplicates(a, b) {
+  const titleA = normalizeString(a.title);
+  const titleB = normalizeString(b.title);
+  if (!titleA || titleA !== titleB) return false;
+
+  const mobileA = normalizePhone(a.mobileNumber);
+  const mobileB = normalizePhone(b.mobileNumber);
+  if (mobileA && mobileB) {
+    return mobileA === mobileB;
+  }
+
+  const webA = cleanWebsite(a.website);
+  const webB = cleanWebsite(b.website);
+  if (webA && webB) {
+    return webA === webB;
+  }
+
+  const addrA = normalizeString(a.address);
+  const addrB = normalizeString(b.address);
+  if (addrA && addrB) {
+    return addrA === addrB;
+  }
+
+  return false;
+}
+
 const findDuplicate = async (title, mobileNumber, website, address, excludeId = null) => {
   const cleanTitle = normalizeString(title);
-  const cleanMobile = normalizePhone(mobileNumber);
-  const cleanWeb = cleanWebsite(website);
-  const cleanAddr = normalizeString(address);
-
   if (!cleanTitle) return null;
 
-  // 1. Name + Mobile Number (if mobileNumber is present)
-  if (cleanMobile) {
-    const query = {
-      title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-      mobileNumber: mobileNumber.trim()
-    };
-    if (excludeId) query._id = { $ne: excludeId };
-    const dup = await Business.findOne(query);
-    if (dup) return dup;
-  }
-  
-  // 2. Name + Website (if mobileNumber is missing, but website is present)
-  if (cleanWeb) {
-    const query = {
-      title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-      website: { $regex: new RegExp(cleanWeb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }
-    };
-    if (excludeId) query._id = { $ne: excludeId };
-    const dup = await Business.findOne(query);
-    if (dup) return dup;
-  }
-  
-  // 3. Name + Address (if website is missing, but address is present)
-  if (cleanAddr) {
-    const query = {
-      title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
-      address: { $regex: new RegExp(`^${cleanAddr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
-    };
-    if (excludeId) query._id = { $ne: excludeId };
-    const dup = await Business.findOne(query);
-    if (dup) return dup;
+  const query = {
+    title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+  };
+  if (excludeId) query._id = { $ne: excludeId };
+
+  const matches = await Business.find(query).lean();
+  for (const match of matches) {
+    if (areDuplicates({ title, mobileNumber, website, address }, match)) {
+      return match;
+    }
   }
 
   return null;
@@ -175,16 +173,29 @@ function extractBusinessFromRow(cleanRow) {
 const getGlobalUniqueListings = async () => {
   const allDocs = await Business.find({}).sort({ createdAt: 1 }).lean();
   const uniqueDocs = [];
-  const seenKeys = new Set();
+  const titleGroups = new Map();
   
   for (const doc of allDocs) {
-    const key = getDeduplicationKey(doc.title, doc.mobileNumber, doc.website, doc.address);
-    if (key) {
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        uniqueDocs.push(doc);
+    const cleanTitle = normalizeString(doc.title);
+    if (!cleanTitle) {
+      uniqueDocs.push(doc);
+      continue;
+    }
+    
+    let isDup = false;
+    const group = titleGroups.get(cleanTitle) || [];
+    for (const existing of group) {
+      if (areDuplicates(doc, existing)) {
+        isDup = true;
+        break;
       }
-    } else {
+    }
+    
+    if (!isDup) {
+      if (!titleGroups.has(cleanTitle)) {
+        titleGroups.set(cleanTitle, []);
+      }
+      titleGroups.get(cleanTitle).push(doc);
       uniqueDocs.push(doc);
     }
   }
@@ -360,16 +371,28 @@ exports.cleanDuplicates = async (req, res) => {
     const allDocs = await Business.find({}).sort({ createdAt: 1 }).lean();
     
     const duplicateIds = [];
-    const seenKeys = new Set();
+    const titleGroups = new Map();
     
     for (const doc of allDocs) {
-      const key = getDeduplicationKey(doc.title, doc.mobileNumber, doc.website, doc.address);
-      if (key) {
-        if (seenKeys.has(key)) {
-          duplicateIds.push(doc._id);
-        } else {
-          seenKeys.add(key);
+      const cleanTitle = normalizeString(doc.title);
+      if (!cleanTitle) continue;
+      
+      let isDup = false;
+      const group = titleGroups.get(cleanTitle) || [];
+      for (const existing of group) {
+        if (areDuplicates(doc, existing)) {
+          isDup = true;
+          break;
         }
+      }
+      
+      if (isDup) {
+        duplicateIds.push(doc._id);
+      } else {
+        if (!titleGroups.has(cleanTitle)) {
+          titleGroups.set(cleanTitle, []);
+        }
+        titleGroups.get(cleanTitle).push(doc);
       }
     }
     
@@ -729,21 +752,22 @@ async function importCSVRows(results) {
   let updatedCount = 0;
   let errorCount = 0;
 
-  // In-memory indexing of existing database records
+  // In-memory indexing of existing database records by title
   const existingDocs = await Business.find({}).lean();
   
-  // Map to quickly lookup existing database records by hierarchical key
-  const dbMap = new Map();
-
+  const dbGroups = new Map();
   for (const doc of existingDocs) {
-    const key = getDeduplicationKey(doc.title, doc.mobileNumber, doc.website, doc.address);
-    if (key) {
-      dbMap.set(key, doc);
+    const cleanTitle = normalizeString(doc.title);
+    if (cleanTitle) {
+      if (!dbGroups.has(cleanTitle)) {
+        dbGroups.set(cleanTitle, []);
+      }
+      dbGroups.get(cleanTitle).push(doc);
     }
   }
 
-  // Map to track processed records within the current CSV batch (intra-batch deduplication)
-  const batchMap = new Map();
+  // Maps to track processed records within the current CSV batch (intra-batch deduplication)
+  const batchGroups = new Map();
 
   // Accumulators for bulk db operations
   const bulkUpdates = [];
@@ -758,11 +782,21 @@ async function importCSVRows(results) {
       continue;
     }
 
-    const key = getDeduplicationKey(biz.title, biz.mobileNumber, biz.website, biz.address);
+    const cleanTitle = normalizeString(biz.title);
 
     // 1. Check duplicate within the current CSV batch (intra-batch)
-    if (key && batchMap.has(key)) {
-      const batchMatch = batchMap.get(key);
+    let batchMatch = null;
+    if (cleanTitle && batchGroups.has(cleanTitle)) {
+      const group = batchGroups.get(cleanTitle);
+      for (const existing of group) {
+        if (areDuplicates(biz, existing)) {
+          batchMatch = existing;
+          break;
+        }
+      }
+    }
+
+    if (batchMatch) {
       // Duplicate in the batch, skip inserting. Update missing/blank fields of the first batch listing
       const fields = ['email', 'address', 'website', 'brokerName', 'phone', 'state', 'countryCode', 'mobileNumber'];
       fields.forEach(f => {
@@ -775,8 +809,18 @@ async function importCSVRows(results) {
     }
 
     // 2. Check duplicate against existing database records
-    if (key && dbMap.has(key)) {
-      const dbMatch = dbMap.get(key);
+    let dbMatch = null;
+    if (cleanTitle && dbGroups.has(cleanTitle)) {
+      const group = dbGroups.get(cleanTitle);
+      for (const existing of group) {
+        if (areDuplicates(biz, existing)) {
+          dbMatch = existing;
+          break;
+        }
+      }
+    }
+
+    if (dbMatch) {
       // Duplicate exists in MongoDB. Update blank/missing fields
       const fieldsToUpdate = {};
       const fields = ['email', 'address', 'website', 'brokerName', 'phone', 'state', 'countryCode', 'mobileNumber'];
@@ -802,8 +846,11 @@ async function importCSVRows(results) {
 
     // 3. Unique record! Add to batch maps and insertion queue
     newBusinesses.push(biz);
-    if (key) {
-      batchMap.set(key, biz);
+    if (cleanTitle) {
+      if (!batchGroups.has(cleanTitle)) {
+        batchGroups.set(cleanTitle, []);
+      }
+      batchGroups.get(cleanTitle).push(biz);
     }
     
     importedCount++;
