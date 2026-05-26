@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RealEstatePro — Dashboard</title>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@700;800&display=swap" rel="stylesheet" />
+
+  <!-- Bootstrap 5.3.3 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+
+  <!-- FontAwesome 6.5.1 -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" rel="stylesheet" />
+
+  <!-- Custom -->
+  <link href="css/styles.css" rel="stylesheet" />
+</head>
+<body>
+
+  <!-- ========================= NAVBAR ========================= -->
+  <nav class="navbar navbar-expand-lg sticky-top">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="index.html">
+        <span class="brand-icon"><i class="fa-solid fa-building"></i></span>
+        RealEstatePro
+      </a>
+
+      <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#mainNav">
+        <i class="fa-solid fa-bars" style="color:var(--text-primary);"></i>
+      </button>
+
+      <div class="collapse navbar-collapse" id="mainNav">
+        <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+          <li class="nav-item"><a class="nav-link active" href="index.html">Dashboard</a></li>
+          <li class="nav-item"><a class="nav-link" href="form.html">Add Listing</a></li>
+          <li class="nav-item"><a class="nav-link" href="database.html">View Database</a></li>
+        </ul>
+
+        <div class="d-flex align-items-center gap-3">
+          <a href="form.html" class="btn btn-premium">
+            <i class="fa-solid fa-plus"></i> Add Listing
+          </a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ========================= MAIN CONTENT ========================= -->
+  <div class="main-content">
+
+    <!-- Metric Cards -->
+    <div class="row g-3 mb-4">
+      <div class="col-sm-6 col-xl-3">
+        <div class="metric-card accent-blue">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <div class="metric-title">Total Listings</div>
+              <div class="metric-value" id="statTotal">0</div>
+            </div>
+            <div class="metric-icon-wrapper icon-blue">
+              <i class="fa-solid fa-list-ul"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-3">
+        <div class="metric-card accent-purple">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <div class="metric-title">Active States</div>
+              <div class="metric-value" id="statStates">0</div>
+            </div>
+            <div class="metric-icon-wrapper icon-purple">
+              <i class="fa-solid fa-map-location-dot"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-3">
+        <div class="metric-card accent-green">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <div class="metric-title">Covered Cities</div>
+              <div class="metric-value" id="statCities">0</div>
+            </div>
+            <div class="metric-icon-wrapper icon-green">
+              <i class="fa-solid fa-city"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-sm-6 col-xl-3">
+        <div class="metric-card accent-yellow">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <div class="metric-title">Average Rating</div>
+              <div class="metric-value" id="statRating">0.0</div>
+            </div>
+            <div class="metric-icon-wrapper icon-yellow">
+              <i class="fa-solid fa-star"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Grid: Table + Sidebar -->
+    <div class="row g-3">
+      <!-- Left Column: Table -->
+      <div class="col-lg-9">
+        <div class="card-glass">
+          <div class="card-header-custom">
+            <h5><i class="fa-solid fa-table-list me-2 text-brand-primary"></i>Business Listings</h5>
+          </div>
+
+          <!-- Filter Bar -->
+          <div class="filter-bar">
+            <input type="text" class="filter-control" id="searchInput" placeholder="Search by name, broker, city, email..." />
+            <select class="filter-control" id="filterState"><option value="">All States</option></select>
+            <select class="filter-control" id="filterCity"><option value="">All Cities</option></select>
+            <select class="filter-control" id="filterCategory"><option value="">All Categories</option></select>
+            <select class="filter-control" id="filterScore">
+              <option value="">Min Score</option>
+              <option value="1">1+</option>
+              <option value="2">2+</option>
+              <option value="3">3+</option>
+              <option value="4">4+</option>
+              <option value="4.5">4.5+</option>
+            </select>
+            <button class="btn-reset-filter" id="resetFiltersBtn">
+              <i class="fa-solid fa-rotate-left"></i> Reset
+            </button>
+          </div>
+
+          <!-- Table -->
+          <div class="table-fixed-wrapper">
+            <!-- Spinner -->
+            <div id="tableSpinner" class="spinner-overlay">
+              <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading…</span>
+              </div>
+            </div>
+
+            <table class="table-premium">
+              <thead>
+                <tr>
+                  <th class="sortable" data-sort="title">Name <i class="fa-solid fa-sort sort-icon"></i></th>
+                  <th class="sortable" data-sort="brokerName">Broker <i class="fa-solid fa-sort sort-icon"></i></th>
+                  <th class="sortable" data-sort="mobileNumber">Mobile <i class="fa-solid fa-sort sort-icon"></i></th>
+                  <th>Email</th>
+                  <th>Address</th>
+                  <th class="sortable" data-sort="totalScore">Score <i class="fa-solid fa-sort sort-icon"></i></th>
+                  <th class="sortable" data-sort="reviewsCount">Reviews <i class="fa-solid fa-sort sort-icon"></i></th>
+                  <th>Street</th>
+                  <th>City</th>
+                  <th>State</th>
+                  <th>Country</th>
+                  <th>Website</th>
+                  <th>Phone</th>
+                  <th>Category</th>
+                  <th>Category Name</th>
+                  <th>Google Maps</th>
+                  <th>Created Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="listingsTableBody"></tbody>
+            </table>
+          </div>
+
+          <!-- Pagination -->
+          <div class="pagination-wrapper">
+            <span class="pagination-info" id="paginationInfo">Showing 0 of 0</span>
+            <div class="pagination-buttons">
+              <button class="btn-page" id="prevPageBtn" disabled>
+                <i class="fa-solid fa-chevron-left"></i> Prev
+              </button>
+              <button class="btn-page" id="nextPageBtn" disabled>
+                Next <i class="fa-solid fa-chevron-right"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- View Database Link -->
+        <div class="text-center mt-3">
+          <a href="database.html" class="btn btn-outline-premium">
+            <i class="fa-solid fa-database"></i> View Full Database
+          </a>
+        </div>
+
+        <!-- CSV Upload Section -->
+        <div class="card-glass mt-4">
+          <div class="card-header-custom">
+            <h5><i class="fa-solid fa-file-csv me-2 text-accent-green"></i>CSV Upload</h5>
+          </div>
+          <div class="card-body-custom">
+            <form id="csvUploadForm">
+              <div class="upload-dropzone" id="uploadDropzone">
+                <div class="dropzone-icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                <div class="dropzone-text">Drag & drop your CSV file here</div>
+                <div class="dropzone-subtext">or click to browse</div>
+                <input type="file" id="csvFileInput" accept=".csv" hidden />
+                <div class="selected-file-name d-none" id="selectedFileName"></div>
+              </div>
+              <div class="d-flex justify-content-center gap-2 mt-3">
+                <button type="button" class="btn btn-outline-premium" id="selectFileBtn">
+                  <i class="fa-solid fa-folder-open"></i> Select File
+                </button>
+                <button type="submit" class="btn btn-premium" id="csvSubmitBtn" disabled>
+                  <i class="fa-solid fa-upload"></i> Upload CSV
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Delete All Section -->
+        <div class="delete-all-section mt-4">
+          <p><i class="fa-solid fa-triangle-exclamation me-1 text-accent-red"></i>Danger Zone — This action cannot be undone</p>
+          <button class="btn btn-danger-premium btn-lg" id="deleteAllBtn">
+            <i class="fa-solid fa-trash-can"></i> Delete Full Dataset
+          </button>
+        </div>
+      </div>
+
+      <!-- Right Sidebar -->
+      <div class="col-lg-3">
+        <div class="card-glass">
+          <div class="card-header-custom">
+            <h6><i class="fa-solid fa-trophy me-2 text-accent-yellow"></i>Top Performing</h6>
+          </div>
+          <div class="card-body-custom">
+            <div id="topRatedContainer" class="top-rated-list">
+              <p class="text-center py-4" style="color:var(--text-muted);font-size:0.8125rem;">Loading…</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================= DELETE SINGLE MODAL ========================= -->
+  <div class="modal fade" id="deleteConfirmModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fa-solid fa-triangle-exclamation me-2 text-accent-red"></i>Confirm Deletion</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p style="color:var(--text-primary);">Are you sure you want to delete <strong id="deleteListingName"></strong>? This action cannot be undone.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-premium" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger-premium" id="confirmDeleteBtn">
+            <i class="fa-solid fa-trash-can"></i> Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================= DELETE ALL MODAL ========================= -->
+  <div class="modal fade" id="deleteAllModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fa-solid fa-triangle-exclamation me-2 text-accent-red"></i>Delete All Records?</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p style="color:var(--text-primary);">Are you sure you want to delete all records? This action is irreversible.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-premium" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-danger-premium" id="confirmDeleteAllBtn">
+            <i class="fa-solid fa-trash-can"></i> Yes, Delete All
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================= TOAST CONTAINER ========================= -->
+  <div id="toastContainer" class="toast-container-custom"></div>
+
+  <!-- Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+  <!-- App Scripts -->
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
