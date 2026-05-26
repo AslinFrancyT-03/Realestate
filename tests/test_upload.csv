@@ -1,0 +1,7 @@
+title,brokerName,phone,mobileNumber,website,address,email,totalScore,reviewsCount,street,city,state,countryCode
+Unique Biz 1,Broker A,12345,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA
+Unique Biz 1,Broker A,12345,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA
+Unique Biz 2,Broker B,,,www.unique2.com,Addr 2,,4.0,2,Street 2,City 2,ST,USA
+Unique Biz 2,Broker B,,,www.unique2.com,Addr 2,email2@test.com,4.0,2,Street 2,City 2,ST,USA
+Real Estate Pros Ltd,John Doe,+1234567890,+1234567890,www.repros.com,123 Ocean Drive Miami FL USA,,4.8,15,123 Ocean Drive,Miami,FL,USA
+Independent Broker,Jane Smith,,,"www.jane-website.com","456 Mountain Pass, Denver, CO, USA",,4.2,8,456 Mountain Pass,Denver,CO,USA

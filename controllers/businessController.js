@@ -3,38 +3,52 @@ const csv = require('csv-parser');
 const Business = require('../models/Business');
 const SystemStats = require('../models/SystemStats');
 
-// Duplicate checking helper (checks title, phone, website - ignoring empty values)
-const findDuplicate = async (title, phone, website, excludeId = null) => {
-  const query = { $or: [] };
+// Hierarchical duplicate checking helper:
+// 1. Name + Mobile Number
+// 2. Name + Website (if mobile missing)
+// 3. Name + Address (if website missing)
+const findDuplicate = async (title, mobileNumber, website, address, excludeId = null) => {
+  const cleanTitle = normalizeString(title);
+  const cleanMobile = normalizePhone(mobileNumber);
+  const cleanWeb = cleanWebsite(website);
+  const cleanAddr = normalizeString(address);
 
-  if (title && title.trim() && title.toLowerCase() !== 'n/a') {
-    query.$or.push({ title: { $regex: new RegExp(`^${title.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') } });
+  if (!cleanTitle) return null;
+
+  // 1. Name + Mobile Number (if mobileNumber is present)
+  if (cleanMobile) {
+    const query = {
+      title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      mobileNumber: mobileNumber.trim()
+    };
+    if (excludeId) query._id = { $ne: excludeId };
+    const dup = await Business.findOne(query);
+    if (dup) return dup;
   }
   
-  if (phone && phone.trim() && phone.toLowerCase() !== 'n/a') {
-    query.$or.push({ phone: phone.trim() });
+  // 2. Name + Website (if mobileNumber is missing, but website is present)
+  if (cleanWeb) {
+    const query = {
+      title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      website: { $regex: new RegExp(cleanWeb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }
+    };
+    if (excludeId) query._id = { $ne: excludeId };
+    const dup = await Business.findOne(query);
+    if (dup) return dup;
+  }
+  
+  // 3. Name + Address (if website is missing, but address is present)
+  if (cleanAddr) {
+    const query = {
+      title: { $regex: new RegExp(`^${cleanTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') },
+      address: { $regex: new RegExp(`^${cleanAddr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') }
+    };
+    if (excludeId) query._id = { $ne: excludeId };
+    const dup = await Business.findOne(query);
+    if (dup) return dup;
   }
 
-  if (website && website.trim() && website.toLowerCase() !== 'n/a') {
-    // Normalise website strings to compare (strip protocol and slash)
-    const cleanWeb = website.trim().replace(/^(https?:\/\/)?(www\.)?/, '').replace(/\/$/, '');
-    if (cleanWeb) {
-      query.$or.push({
-        website: { $regex: new RegExp(cleanWeb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }
-      });
-    }
-  }
-
-  if (query.$or.length === 0) return null;
-
-  if (excludeId) {
-    return await Business.findOne({
-      _id: { $ne: excludeId },
-      $or: query.$or
-    });
-  }
-
-  return await Business.findOne({ $or: query.$or });
+  return null;
 };
 
 /**
@@ -157,103 +171,148 @@ function extractBusinessFromRow(cleanRow) {
 // @desc    Get all business listings + stats
 // @route   GET /api/business
 // @access  Public
+// Helper to retrieve all globally unique listings based on hierarchical keys
+const getGlobalUniqueListings = async () => {
+  const allDocs = await Business.find({}).sort({ createdAt: 1 }).lean();
+  const uniqueDocs = [];
+  const seenKeys = new Set();
+  
+  for (const doc of allDocs) {
+    const key = getDeduplicationKey(doc.title, doc.mobileNumber, doc.website, doc.address);
+    if (key) {
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        uniqueDocs.push(doc);
+      }
+    } else {
+      uniqueDocs.push(doc);
+    }
+  }
+  return uniqueDocs;
+};
+
+// @desc    Get all business listings + stats
+// @route   GET /api/business
+// @access  Public
 exports.getBusinesses = async (req, res) => {
   try {
     const { search, state, city, category, minScore, sortBy, sortOrder, page = 1, limit = 10 } = req.query;
 
-    // 1. Build Query for Listings
-    const query = {};
+    // 1. Get all globally unique listings
+    const globalUnique = await getGlobalUniqueListings();
 
-    // Search functionality (title, brokerName, city, state, email)
+    // 2. Compute global dashboard statistics on globalUnique
+    const totalCount = globalUnique.length;
+    
+    const statesSet = new Set();
+    const citiesSet = new Set();
+    const categoriesSet = new Set();
+    let totalScoreSum = 0;
+    let ratingCount = 0;
+
+    globalUnique.forEach(doc => {
+      if (doc.state && doc.state.trim() && doc.state.toLowerCase() !== 'n/a') {
+        statesSet.add(doc.state.trim());
+      }
+      if (doc.city && doc.city.trim() && doc.city.toLowerCase() !== 'n/a') {
+        citiesSet.add(doc.city.trim());
+      }
+      if (doc.category && doc.category.trim() && doc.category.toLowerCase() !== 'n/a') {
+        doc.category.split(',').forEach(c => {
+          const trimmed = c.trim();
+          if (trimmed && trimmed.toLowerCase() !== 'n/a') {
+            categoriesSet.add(trimmed);
+          }
+        });
+      }
+      if (doc.totalScore > 0) {
+        totalScoreSum += doc.totalScore;
+        ratingCount++;
+      }
+    });
+
+    const activeStates = Array.from(statesSet);
+    const activeCities = Array.from(citiesSet);
+    const activeCategories = Array.from(categoriesSet);
+    const averageRating = ratingCount > 0 ? parseFloat((totalScoreSum / ratingCount).toFixed(2)) : 0.0;
+
+    // Top 5 rated businesses
+    const topRatedings = globalUnique
+      .filter(doc => doc.totalScore > 0)
+      .sort((a, b) => b.totalScore - a.totalScore || b.reviewsCount - a.reviewsCount)
+      .slice(0, 5);
+
+    // Top 5 categories with most listings
+    const categoryCounts = {};
+    globalUnique.forEach(doc => {
+      if (doc.category && doc.category.trim() && doc.category.toLowerCase() !== 'n/a') {
+        categoryCounts[doc.category] = (categoryCounts[doc.category] || 0) + 1;
+      }
+    });
+    const topCategories = Object.keys(categoryCounts)
+      .map(name => ({ name, count: categoryCounts[name] }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    // 3. Filter the globalUnique list based on request parameters
+    let filteredListings = [...globalUnique];
+
     if (search) {
-      const searchRegex = new RegExp(search.trim(), 'i');
-      query.$or = [
-        { title: searchRegex },
-        { brokerName: searchRegex },
-        { city: searchRegex },
-        { state: searchRegex },
-        { email: searchRegex }
-      ];
+      const searchStr = search.trim().toLowerCase();
+      filteredListings = filteredListings.filter(doc => 
+        (doc.title && doc.title.toLowerCase().includes(searchStr)) ||
+        (doc.brokerName && doc.brokerName.toLowerCase().includes(searchStr)) ||
+        (doc.city && doc.city.toLowerCase().includes(searchStr)) ||
+        (doc.state && doc.state.toLowerCase().includes(searchStr)) ||
+        (doc.email && doc.email.toLowerCase().includes(searchStr))
+      );
     }
 
-    // Filters
     if (state) {
-      query.state = { $regex: new RegExp(`^${state.trim()}$`, 'i') };
-    }
-    if (city) {
-      query.city = { $regex: new RegExp(`^${city.trim()}$`, 'i') };
-    }
-    if (category) {
-      query.category = { $regex: new RegExp(`^${category.trim()}$`, 'i') };
-    }
-    if (minScore) {
-      query.totalScore = { $gte: parseFloat(minScore) };
+      const stateStr = state.trim().toLowerCase();
+      filteredListings = filteredListings.filter(doc => doc.state && doc.state.trim().toLowerCase() === stateStr);
     }
 
-    // 2. Sorting
-    let sort = {};
+    if (city) {
+      const cityStr = city.trim().toLowerCase();
+      filteredListings = filteredListings.filter(doc => doc.city && doc.city.trim().toLowerCase() === cityStr);
+    }
+
+    if (category) {
+      const categoryStr = category.trim().toLowerCase();
+      filteredListings = filteredListings.filter(doc => doc.category && doc.category.trim().toLowerCase() === categoryStr);
+    }
+
+    if (minScore) {
+      const minVal = parseFloat(minScore);
+      filteredListings = filteredListings.filter(doc => doc.totalScore >= minVal);
+    }
+
+    // 4. Sort filteredListings
     if (sortBy) {
       const order = sortOrder === 'desc' ? -1 : 1;
-      if (sortBy === 'reviewCount' || sortBy === 'reviewsCount') {
-        sort.reviewsCount = order;
-      } else {
-        sort[sortBy] = order;
-      }
+      const field = (sortBy === 'reviewCount' || sortBy === 'reviewsCount') ? 'reviewsCount' : sortBy;
+      filteredListings.sort((a, b) => {
+        let valA = a[field] !== undefined ? a[field] : '';
+        let valB = b[field] !== undefined ? b[field] : '';
+        
+        if (typeof valA === 'string') valA = valA.toLowerCase();
+        if (typeof valB === 'string') valB = valB.toLowerCase();
+        
+        if (valA < valB) return -1 * order;
+        if (valA > valB) return 1 * order;
+        return 0;
+      });
     } else {
-      sort.createdAt = -1; // Default newest first
+      // Default: newest first (createdAt descending)
+      filteredListings.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
     }
 
-    // 3. Pagination
+    // 5. Paginate
     const pageNum = parseInt(page) || 1;
     const limitNum = parseInt(limit) || 10;
     const skip = (pageNum - 1) * limitNum;
-
-    // Execute paginated search query
-    const listings = await Business.find(query)
-      .sort(sort)
-      .skip(skip)
-      .limit(limitNum);
-
-    const totalListings = await Business.countDocuments(query);
-
-    // 4. Calculate Global Dashboard Cards Stats
-    const totalCount = await Business.countDocuments();
-    
-    // Distinct states and cities
-    const distinctStates = await Business.distinct('state');
-    const distinctCities = await Business.distinct('city');
-    
-    // Filter out empty/null/N/A values for cleaner distinct lists
-    const activeStates = distinctStates.filter(s => s && s.trim() && s.toLowerCase() !== 'n/a');
-    const activeCities = distinctCities.filter(c => c && c.trim() && c.toLowerCase() !== 'n/a');
-
-    // Average rating (only from items with score > 0)
-    const ratingStats = await Business.aggregate([
-      { $match: { totalScore: { $gt: 0 } } },
-      { $group: { _id: null, avgRating: { $avg: '$totalScore' } } }
-    ]);
-    const averageRating = ratingStats.length > 0 ? parseFloat(ratingStats[0].avgRating.toFixed(2)) : 0.0;
-
-    // Top 5 rated businesses (sorted by score desc, review count desc)
-    const topRated = await Business.find({ totalScore: { $gt: 0 } })
-      .sort({ totalScore: -1, reviewsCount: -1 })
-      .limit(5);
-
-    // Top 5 categories with most listings
-    const categoryStats = await Business.aggregate([
-      { $match: { category: { $ne: 'N/A' }, $and: [{ category: { $ne: '' } }] } },
-      { $group: { _id: '$category', count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-      { $limit: 5 }
-    ]);
-    const topCategories = categoryStats.map(c => ({
-      name: c._id || 'N/A',
-      count: c.count
-    }));
-
-    // Get dynamic filters list from all records in db (to populate dropdowns in UI)
-    const allCategories = await Business.distinct('category');
-    const activeCategories = allCategories.filter(cat => cat && cat.trim() && cat.toLowerCase() !== 'n/a');
+    const paginatedListings = filteredListings.slice(skip, skip + limitNum);
 
     // Fetch duplicates removed from SystemStats
     const statsDoc = await SystemStats.findOne({ key: 'duplicatesRemoved' });
@@ -261,20 +320,20 @@ exports.getBusinesses = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      count: listings.length,
+      count: paginatedListings.length,
       pagination: {
-        total: totalListings,
+        total: filteredListings.length,
         page: pageNum,
         limit: limitNum,
-        totalPages: Math.ceil(totalListings / limitNum)
+        totalPages: Math.ceil(filteredListings.length / limitNum)
       },
-      data: listings,
+      data: paginatedListings,
       stats: {
         totalBusinesses: totalCount,
         totalStates: activeStates.length,
         totalCities: activeCities.length,
         averageRating,
-        topRated,
+        topRated: topRatedings,
         topCategories,
         duplicatesRemoved
       },
@@ -288,6 +347,57 @@ exports.getBusinesses = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Server Error fetching businesses',
+      error: error.message
+    });
+  }
+};
+
+// @desc    Remove all duplicate records permanently from MongoDB
+// @route   POST /api/business/clean-duplicates
+// @access  Public
+exports.cleanDuplicates = async (req, res) => {
+  try {
+    const allDocs = await Business.find({}).sort({ createdAt: 1 }).lean();
+    
+    const duplicateIds = [];
+    const seenKeys = new Set();
+    
+    for (const doc of allDocs) {
+      const key = getDeduplicationKey(doc.title, doc.mobileNumber, doc.website, doc.address);
+      if (key) {
+        if (seenKeys.has(key)) {
+          duplicateIds.push(doc._id);
+        } else {
+          seenKeys.add(key);
+        }
+      }
+    }
+    
+    let deletedCount = 0;
+    if (duplicateIds.length > 0) {
+      const result = await Business.deleteMany({ _id: { $in: duplicateIds } });
+      deletedCount = result.deletedCount;
+      
+      // Update SystemStats with total duplicates removed permanently
+      await SystemStats.updateOne(
+        { key: 'duplicatesRemoved' },
+        { $inc: { value: deletedCount } },
+        { upsert: true }
+      );
+    }
+    
+    const newTotalCount = await Business.countDocuments();
+    
+    res.status(200).json({
+      success: true,
+      message: `Successfully cleaned duplicates permanently. Removed: ${deletedCount} records.`,
+      duplicatesRemoved: deletedCount,
+      totalListings: newTotalCount
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server Error during duplicate cleanup',
       error: error.message
     });
   }
@@ -335,11 +445,11 @@ exports.createBusiness = async (req, res) => {
     }
 
     // Check duplicate
-    const duplicate = await findDuplicate(title, phone, website);
+    const duplicate = await findDuplicate(title, mobileNumber, website, address);
     if (duplicate) {
       return res.status(409).json({
         success: false,
-        message: `A duplicate business listing already exists matching the name, phone, or website (${duplicate.title})`
+        message: `A duplicate business listing already exists matching the hierarchical criteria (${duplicate.title})`
       });
     }
 
@@ -369,6 +479,9 @@ exports.createBusiness = async (req, res) => {
 // @desc    Update business listing
 // @route   PUT /api/business/:id
 // @access  Public
+// @desc    Update business listing
+// @route   PUT /api/business/:id
+// @access  Public
 exports.updateBusiness = async (req, res) => {
   try {
     const {
@@ -388,11 +501,11 @@ exports.updateBusiness = async (req, res) => {
     }
 
     // Check duplicate (excluding self)
-    const duplicate = await findDuplicate(title, phone, website, req.params.id);
+    const duplicate = await findDuplicate(title, mobileNumber, website, address, req.params.id);
     if (duplicate) {
       return res.status(409).json({
         success: false,
-        message: `A duplicate business listing already exists matching the name, phone, or website (${duplicate.title})`
+        message: `A duplicate business listing already exists matching the hierarchical criteria (${duplicate.title})`
       });
     }
 
@@ -581,6 +694,31 @@ function isBlank(val) {
   return str === '' || str === 'n/a' || str === 'not available';
 }
 
+// Helper to check and generate the hierarchical deduplication key
+function getDeduplicationKey(title, mobileNumber, website, address) {
+  const cleanTitle = normalizeString(title);
+  const cleanMobile = normalizePhone(mobileNumber);
+  const cleanWeb = cleanWebsite(website);
+  const cleanAddr = normalizeString(address);
+
+  if (!cleanTitle) return null;
+
+  // 1. Name + Mobile Number (highest priority)
+  if (cleanMobile) {
+    return `mobile|${cleanTitle}|${cleanMobile}`;
+  }
+  // 2. Name + Website (if mobile number is missing)
+  if (cleanWeb) {
+    return `website|${cleanTitle}|${cleanWeb}`;
+  }
+  // 3. Name + Address (if website is missing)
+  if (cleanAddr) {
+    return `address|${cleanTitle}|${cleanAddr}`;
+  }
+  
+  return null;
+}
+
 /**
  * Import an array of raw CSV row objects into MongoDB with high-performance duplicate check and merging.
  * Returns { imported, duplicates, updated, errors }
@@ -594,32 +732,18 @@ async function importCSVRows(results) {
   // In-memory indexing of existing database records
   const existingDocs = await Business.find({}).lean();
   
-  // Maps to quickly lookup existing database records
-  const dbWebsiteMap = new Map();
-  const dbNamePhoneMap = new Map();
-  const dbNameLocationMap = new Map();
+  // Map to quickly lookup existing database records by hierarchical key
+  const dbMap = new Map();
 
   for (const doc of existingDocs) {
-    const cleanWeb = cleanWebsite(doc.website);
-    if (cleanWeb) {
-      dbWebsiteMap.set(cleanWeb, doc);
-    }
-    const cleanTitle = normalizeString(doc.title);
-    const cleanPh = normalizePhone(doc.phone);
-    if (cleanTitle && cleanPh) {
-      dbNamePhoneMap.set(`${cleanTitle}|${cleanPh}`, doc);
-    }
-    const cleanCity = normalizeString(doc.city);
-    const cleanState = normalizeString(doc.state);
-    if (cleanTitle && cleanCity && cleanState) {
-      dbNameLocationMap.set(`${cleanTitle}|${cleanCity}|${cleanState}`, doc);
+    const key = getDeduplicationKey(doc.title, doc.mobileNumber, doc.website, doc.address);
+    if (key) {
+      dbMap.set(key, doc);
     }
   }
 
-  // Maps to track processed records within the current CSV batch (intra-batch deduplication)
-  const batchWebsiteMap = new Map();
-  const batchNamePhoneMap = new Map();
-  const batchNameLocationMap = new Map();
+  // Map to track processed records within the current CSV batch (intra-batch deduplication)
+  const batchMap = new Map();
 
   // Accumulators for bulk db operations
   const bulkUpdates = [];
@@ -634,23 +758,11 @@ async function importCSVRows(results) {
       continue;
     }
 
-    const cleanWeb = cleanWebsite(biz.website);
-    const cleanTitle = normalizeString(biz.title);
-    const cleanPh = normalizePhone(biz.phone);
-    const cleanCity = normalizeString(biz.city);
-    const cleanState = normalizeString(biz.state);
+    const key = getDeduplicationKey(biz.title, biz.mobileNumber, biz.website, biz.address);
 
     // 1. Check duplicate within the current CSV batch (intra-batch)
-    let batchMatch = null;
-    if (cleanWeb && batchWebsiteMap.has(cleanWeb)) {
-      batchMatch = batchWebsiteMap.get(cleanWeb);
-    } else if (cleanTitle && cleanPh && batchNamePhoneMap.has(`${cleanTitle}|${cleanPh}`)) {
-      batchMatch = batchNamePhoneMap.get(`${cleanTitle}|${cleanPh}`);
-    } else if (cleanTitle && cleanCity && cleanState && batchNameLocationMap.has(`${cleanTitle}|${cleanCity}|${cleanState}`)) {
-      batchMatch = batchNameLocationMap.get(`${cleanTitle}|${cleanCity}|${cleanState}`);
-    }
-
-    if (batchMatch) {
+    if (key && batchMap.has(key)) {
+      const batchMatch = batchMap.get(key);
       // Duplicate in the batch, skip inserting. Update missing/blank fields of the first batch listing
       const fields = ['email', 'address', 'website', 'brokerName', 'phone', 'state', 'countryCode', 'mobileNumber'];
       fields.forEach(f => {
@@ -663,16 +775,8 @@ async function importCSVRows(results) {
     }
 
     // 2. Check duplicate against existing database records
-    let dbMatch = null;
-    if (cleanWeb && dbWebsiteMap.has(cleanWeb)) {
-      dbMatch = dbWebsiteMap.get(cleanWeb);
-    } else if (cleanTitle && cleanPh && dbNamePhoneMap.has(`${cleanTitle}|${cleanPh}`)) {
-      dbMatch = dbNamePhoneMap.get(`${cleanTitle}|${cleanPh}`);
-    } else if (cleanTitle && cleanCity && cleanState && dbNameLocationMap.has(`${cleanTitle}|${cleanCity}|${cleanState}`)) {
-      dbMatch = dbNameLocationMap.get(`${cleanTitle}|${cleanCity}|${cleanState}`);
-    }
-
-    if (dbMatch) {
+    if (key && dbMap.has(key)) {
+      const dbMatch = dbMap.get(key);
       // Duplicate exists in MongoDB. Update blank/missing fields
       const fieldsToUpdate = {};
       const fields = ['email', 'address', 'website', 'brokerName', 'phone', 'state', 'countryCode', 'mobileNumber'];
@@ -698,9 +802,9 @@ async function importCSVRows(results) {
 
     // 3. Unique record! Add to batch maps and insertion queue
     newBusinesses.push(biz);
-    if (cleanWeb) batchWebsiteMap.set(cleanWeb, biz);
-    if (cleanTitle && cleanPh) batchNamePhoneMap.set(`${cleanTitle}|${cleanPh}`, biz);
-    if (cleanTitle && cleanCity && cleanState) batchNameLocationMap.set(`${cleanTitle}|${cleanCity}|${cleanState}`, biz);
+    if (key) {
+      batchMap.set(key, biz);
+    }
     
     importedCount++;
   }
@@ -746,33 +850,30 @@ exports.getAgents = async (req, res) => {
   try {
     const { searchName, searchState, searchCompany, page = 1, limit = 10 } = req.query;
 
-    const query = {};
+    const globalUnique = await getGlobalUniqueListings();
+
+    let filteredAgents = [...globalUnique];
 
     if (searchName && searchName.trim()) {
-      query.brokerName = { $regex: new RegExp(searchName.trim(), 'i') };
+      const nameStr = searchName.trim().toLowerCase();
+      filteredAgents = filteredAgents.filter(doc => doc.brokerName && doc.brokerName.toLowerCase().includes(nameStr));
     }
     if (searchState && searchState.trim()) {
-      query.state = { $regex: new RegExp(searchState.trim(), 'i') };
+      const stateStr = searchState.trim().toLowerCase();
+      filteredAgents = filteredAgents.filter(doc => doc.state && doc.state.toLowerCase() === stateStr);
     }
     if (searchCompany && searchCompany.trim()) {
-      query.title = { $regex: new RegExp(searchCompany.trim(), 'i') };
+      const companyStr = searchCompany.trim().toLowerCase();
+      filteredAgents = filteredAgents.filter(doc => doc.title && doc.title.toLowerCase().includes(companyStr));
     }
 
     const pageNum = parseInt(page) || 1;
     const limitNum = parseInt(limit) || 10;
     const skip = (pageNum - 1) * limitNum;
 
-    // Fetch and project only Name, Company Name, Website, Address, Email, State, Country Code
-    const rawAgents = await Business.find(query)
-      .select('brokerName title website address email state countryCode -_id')
-      .skip(skip)
-      .limit(limitNum)
-      .lean();
+    const paginatedAgents = filteredAgents.slice(skip, skip + limitNum);
 
-    const totalAgents = await Business.countDocuments(query);
-
-    // Normalize values safely. Email and Company Name are defaulted to 'N/A' if unavailable
-    const agents = rawAgents.map(agent => ({
+    const agents = paginatedAgents.map(agent => ({
       name: agent.brokerName && agent.brokerName.trim() && agent.brokerName.toLowerCase() !== 'n/a' ? agent.brokerName : 'N/A',
       companyName: agent.title && agent.title.trim() && agent.title.toLowerCase() !== 'n/a' ? agent.title : 'N/A',
       website: agent.website && agent.website.trim() && agent.website.toLowerCase() !== 'n/a' ? agent.website : 'N/A',
@@ -786,10 +887,10 @@ exports.getAgents = async (req, res) => {
       success: true,
       count: agents.length,
       pagination: {
-        total: totalAgents,
+        total: filteredAgents.length,
         page: pageNum,
         limit: limitNum,
-        totalPages: Math.ceil(totalAgents / limitNum)
+        totalPages: Math.ceil(filteredAgents.length / limitNum)
       },
       data: agents
     });

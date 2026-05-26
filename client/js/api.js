@@ -118,6 +118,15 @@ const BusinessAPI = (() => {
     });
   }
 
+  /**
+   * POST /api/business/clean-duplicates
+   */
+  function cleanDuplicates() {
+    return request(`${BASE_URL}/clean-duplicates`, {
+      method: 'POST',
+    });
+  }
+
   return {
     getBusinesses,
     getBusiness,
@@ -127,6 +136,7 @@ const BusinessAPI = (() => {
     deleteAllBusinesses,
     uploadCSV,
     getAgents,
+    cleanDuplicates,
   };
 })();
 

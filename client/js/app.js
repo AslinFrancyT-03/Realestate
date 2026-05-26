@@ -67,6 +67,16 @@ document.addEventListener('DOMContentLoaded', () => {
     deleteAllModalObj = new bootstrap.Modal(deleteAllModalEl);
   }
 
+  // Clean Duplicates Modal
+  const cleanDuplicatesBtn = document.getElementById('cleanDuplicatesBtn');
+  const cleanDuplicatesModalEl = document.getElementById('cleanDuplicatesModal');
+  const confirmCleanDuplicatesBtn = document.getElementById('confirmCleanDuplicatesBtn');
+
+  let cleanDuplicatesModalObj = null;
+  if (cleanDuplicatesModalEl) {
+    cleanDuplicatesModalObj = new bootstrap.Modal(cleanDuplicatesModalEl);
+  }
+
   // Duplicates Removed & CSV Upload Summary elements
   const statDuplicates = document.getElementById('statDuplicates');
   const summaryTotalRows = document.getElementById('summaryTotalRows');
@@ -345,6 +355,41 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       } catch (err) {
         showToast('Operation Failed', err.message || 'Could not delete dataset', 'error');
+      } finally {
+        showSpinner(false);
+      }
+    });
+  }
+
+  // --- Clean Duplicates Button listener ---
+  if (cleanDuplicatesBtn) {
+    cleanDuplicatesBtn.addEventListener('click', () => {
+      if (cleanDuplicatesModalObj) cleanDuplicatesModalObj.show();
+    });
+  }
+
+  // --- Confirm Clean Duplicates handler ---
+  if (confirmCleanDuplicatesBtn) {
+    confirmCleanDuplicatesBtn.addEventListener('click', async () => {
+      try {
+        if (cleanDuplicatesModalObj) cleanDuplicatesModalObj.hide();
+        showSpinner(true, 'Scanning and permanently removing duplicate records...');
+        const result = await window.BusinessAPI.cleanDuplicates();
+        
+        if (result.success) {
+          showToast(
+            'Cleanup Successful', 
+            `Permanently removed ${result.duplicatesRemoved || 0} duplicate record(s). Updated listings: ${result.totalListings}`, 
+            'success'
+          );
+          
+          state.page = 1;
+          state.filtersInitialized = false; // refresh drop downs
+          
+          await loadData();
+        }
+      } catch (err) {
+        showToast('Cleanup Failed', err.message || 'Failed to process cleanup request', 'error');
       } finally {
         showSpinner(false);
       }

@@ -90,8 +90,10 @@ const BusinessSchema = new mongoose.Schema(
 BusinessSchema.index({ title: 'text', brokerName: 'text', city: 'text', state: 'text' });
 
 // Performance optimization indexes for duplicate checking
-BusinessSchema.index({ website: 1 });
 BusinessSchema.index({ title: 1 });
+BusinessSchema.index({ mobileNumber: 1 });
+BusinessSchema.index({ website: 1 });
+BusinessSchema.index({ address: 1 });
 BusinessSchema.index({ phone: 1 });
 
 module.exports = mongoose.model('Business', BusinessSchema);

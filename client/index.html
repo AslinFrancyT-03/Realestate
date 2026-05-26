@@ -234,8 +234,13 @@
         </div>
 
         <!-- Delete All Section -->
-        <div class="delete-all-section mt-4">
-          <p><i class="fa-solid fa-triangle-exclamation me-1 text-accent-red"></i>Danger Zone — This action cannot be undone</p>
+        <div class="delete-all-section mt-4 d-flex flex-wrap align-items-center gap-3">
+          <div class="w-100 mb-1">
+            <p class="mb-0"><i class="fa-solid fa-triangle-exclamation me-1 text-accent-red"></i>Danger Zone — Database Management Actions</p>
+          </div>
+          <button class="btn btn-premium btn-lg" id="cleanDuplicatesBtn" style="background: linear-gradient(135deg, var(--brand-primary), #3b82f6);">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Clean Duplicates
+          </button>
           <button class="btn btn-danger-premium btn-lg" id="deleteAllBtn">
             <i class="fa-solid fa-trash-can"></i> Delete Full Dataset
           </button>
@@ -294,6 +299,28 @@
           <button type="button" class="btn btn-outline-premium" data-bs-dismiss="modal">Cancel</button>
           <button type="button" class="btn btn-danger-premium" id="confirmDeleteAllBtn">
             <i class="fa-solid fa-trash-can"></i> Yes, Delete All
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================= CLEAN DUPLICATES CONFIRMATION MODAL ========================= -->
+  <div class="modal fade" id="cleanDuplicatesModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fa-solid fa-wand-magic-sparkles me-2 text-brand-primary"></i>Clean Duplicate Listings?</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p style="color:var(--text-primary);">Are you sure you want to clean all duplicates permanently from the database?</p>
+          <p style="color:var(--text-muted);font-size:0.875rem;">This will scan the collection and permanently remove duplicate records, keeping only the first occurrence based on the hierarchical rules.</p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-premium" data-bs-dismiss="modal">Cancel</button>
+          <button type="button" class="btn btn-premium" id="confirmCleanDuplicatesBtn">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Yes, Clean Duplicates
           </button>
         </div>
       </div>

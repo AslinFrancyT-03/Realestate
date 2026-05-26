@@ -12,7 +12,8 @@ const {
   deleteBusiness,
   deleteAllBusinesses,
   uploadCSV,
-  getAgents
+  getAgents,
+  cleanDuplicates
 } = require('../controllers/businessController');
 
 // Configure Multer Storage for file uploads
@@ -56,6 +57,9 @@ router.get('/agents', getAgents);
 
 // DELETE ALL must be registered before standard /:id route
 router.delete('/delete-all', deleteAllBusinesses);
+
+// CLEAN DUPLICATES permanently removes duplicates from collection
+router.post('/clean-duplicates', cleanDuplicates);
 
 // CSV upload MUST be before /:id to prevent 'upload-csv' being matched as an :id param
 router.post('/upload-csv', upload.single('csvFile'), uploadCSV);

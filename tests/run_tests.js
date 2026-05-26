@@ -199,24 +199,24 @@ async function runTests() {
     console.log('✓ Agent Details search/filters verified.');
 
     // 8. Test CSV Upload mock and Deduplication Flow
-    console.log('\n[6/7] Testing CSV Import & Deduplication Flow...');
+    console.log('\n[6/8] Testing CSV Import & Deduplication Flow...');
     const testCsvPath = path.join(__dirname, 'test_upload.csv');
     
-    // Construct a CSV with 6 rows:
-    // Row 1: New unique inserted. (Unique Biz 1)
-    // Row 2: Skipped (duplicate of Row 1 by website).
-    // Row 3: New unique inserted. (Unique Biz 2)
-    // Row 4: Skipped (duplicate of Row 3 by website), but merges email2@test.com into Row 3.
-    // Row 5: Matches existing DB record (Real Estate Pros Ltd by website). Counts as updated existing.
-    // Row 6: Matches existing DB record (Independent Broker by name + location). Website is merged into the DB record.
+    // Construct a CSV with 6 rows designed for the new hierarchical rules:
+    // - Row 1: Unique Biz 1 (Mobile present) -> Unique Biz 1 (New, unique inserted)
+    // - Row 2: Unique Biz 1 (Mobile present) -> Skipped (Duplicate of Row 1 by Name + Mobile)
+    // - Row 3: Unique Biz 2 (Mobile missing, Website present) -> Unique Biz 2 (New, unique inserted)
+    // - Row 4: Unique Biz 2 (Mobile missing, Website present) -> Skipped (Duplicate of Row 3 by Name + Website), merges email2@test.com
+    // - Row 5: Real Estate Pros Ltd -> Matches existing DB record by Name + Mobile. Counts as updated.
+    // - Row 6: Independent Broker -> Matches existing DB record by Name + Website (since mobile is empty). Counts as updated.
     const csvContent = 
-      'title,brokerName,phone,website,address,email,totalScore,reviewsCount,street,city,state,countryCode\n' +
-      'Unique Biz 1,Broker A,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA\n' +
-      'Unique Biz 1,Broker A,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA\n' +
-      'Unique Biz 2,Broker B,,www.unique2.com,Addr 2,,4.0,2,Street 2,City 2,ST,USA\n' +
-      'Unique Biz 2,Broker B,,www.unique2.com,Addr 2,email2@test.com,4.0,2,Street 2,City 2,ST,USA\n' +
-      'Real Estate Pros Ltd,John Doe,+1234567890,www.repros.com,123 Ocean Drive Miami FL USA,,4.8,15,123 Ocean Drive,Miami,FL,USA\n' +
-      'Independent Broker,Jane Smith,,www.jane-website.com,,,4.2,8,456 Mountain Pass,Denver,CO,USA\n';
+      'title,brokerName,phone,mobileNumber,website,address,email,totalScore,reviewsCount,street,city,state,countryCode\n' +
+      'Unique Biz 1,Broker A,12345,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA\n' +
+      'Unique Biz 1,Broker A,12345,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA\n' +
+      'Unique Biz 2,Broker B,,,www.unique2.com,Addr 2,,4.0,2,Street 2,City 2,ST,USA\n' +
+      'Unique Biz 2,Broker B,,,www.unique2.com,Addr 2,email2@test.com,4.0,2,Street 2,City 2,ST,USA\n' +
+      'Real Estate Pros Ltd,John Doe,+1234567890,+1234567890,www.repros.com,123 Ocean Drive Miami FL USA,,4.8,15,123 Ocean Drive,Miami,FL,USA\n' +
+      'Independent Broker,Jane Smith,,,"www.jane-website.com","456 Mountain Pass, Denver, CO, USA",,4.2,8,456 Mountain Pass,Denver,CO,USA\n';
       
     fs.writeFileSync(testCsvPath, csvContent);
     
@@ -270,8 +270,47 @@ async function runTests() {
     assert.equal(json.stats.duplicatesRemoved, 4);
     console.log('✓ Global duplicatesRemoved metric card count verified.');
 
-    // 9. Test Delete Dataset
-    console.log('\n[7/7] Testing Delete Dataset Flow...');
+    // 9. Test Permanent "Clean Duplicates" API
+    console.log('\n[7/8] Testing Permanent "Clean Duplicates" API...');
+    
+    // We will bypass the findDuplicate validation by directly bypassing create or inserting duplicates into db
+    // Let's create duplicates in the test database using standard create with unique titles so they bypass the checks,
+    // or by calling create with different parameters but same mobile number!
+    const dup1 = {
+      title: 'Duplicate Clean Test',
+      mobileNumber: '99999',
+      website: 'clean1.com',
+      address: 'Test Addr'
+    };
+    const dup2 = {
+      title: 'Duplicate Clean Test',
+      mobileNumber: '99999',
+      website: 'clean2.com',
+      address: 'Test Addr 2'
+    };
+    
+    // Save first
+    await Business.create(dup1);
+    // Force insert second bypassing findDuplicate by writing directly to mongoose schema or model bypass
+    const docBypass = new Business(dup2);
+    await docBypass.save({ validateBeforeSave: false }); // bypass any schema validation if any
+
+    // Verify database actually has duplicates matching the same mobile number
+    let listBefore = await Business.find({ title: 'Duplicate Clean Test' });
+    assert.equal(listBefore.length, 2);
+
+    // Call clean-duplicates API
+    res = await fetch(`${BASE_URL}/api/business/clean-duplicates`, { method: 'POST' });
+    json = await res.json();
+    assert.equal(json.success, true);
+    assert.equal(json.duplicatesRemoved, 1); // 1 duplicate deleted
+
+    let listAfter = await Business.find({ title: 'Duplicate Clean Test' });
+    assert.equal(listAfter.length, 1);
+    console.log('✓ Permanent "Clean Duplicates" API verified successfully.');
+
+    // 10. Test Delete Dataset
+    console.log('\n[8/8] Testing Delete Dataset Flow...');
     res = await fetch(`${BASE_URL}/api/business/delete-all`, { method: 'DELETE' });
     json = await res.json();
     assert.equal(json.success, true);
