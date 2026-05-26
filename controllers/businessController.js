@@ -616,3 +616,67 @@ async function importCSVRows(results) {
 exports.autoImportCSV = async (csvPath) => {
   console.log('[Auto-Import] Preloading is disabled. Starting with a fresh empty database.');
 };
+
+// @desc    Get agent details with filtering and pagination
+// @route   GET /api/business/agents
+// @access  Public
+exports.getAgents = async (req, res) => {
+  try {
+    const { searchName, searchState, searchCompany, page = 1, limit = 10 } = req.query;
+
+    const query = {};
+
+    if (searchName && searchName.trim()) {
+      query.brokerName = { $regex: new RegExp(searchName.trim(), 'i') };
+    }
+    if (searchState && searchState.trim()) {
+      query.state = { $regex: new RegExp(searchState.trim(), 'i') };
+    }
+    if (searchCompany && searchCompany.trim()) {
+      query.title = { $regex: new RegExp(searchCompany.trim(), 'i') };
+    }
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    // Fetch and project only Name, Company Name, Website, Address, Email, State, Country Code
+    const rawAgents = await Business.find(query)
+      .select('brokerName title website address email state countryCode -_id')
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    const totalAgents = await Business.countDocuments(query);
+
+    // Normalize values safely. Email and Company Name are defaulted to 'N/A' if unavailable
+    const agents = rawAgents.map(agent => ({
+      name: agent.brokerName && agent.brokerName.trim() && agent.brokerName.toLowerCase() !== 'n/a' ? agent.brokerName : 'N/A',
+      companyName: agent.title && agent.title.trim() && agent.title.toLowerCase() !== 'n/a' ? agent.title : 'N/A',
+      website: agent.website && agent.website.trim() && agent.website.toLowerCase() !== 'n/a' ? agent.website : 'N/A',
+      address: agent.address && agent.address.trim() && agent.address.toLowerCase() !== 'n/a' ? agent.address : 'N/A',
+      email: agent.email && agent.email.trim() && agent.email.toLowerCase() !== 'n/a' ? agent.email : 'N/A',
+      state: agent.state && agent.state.trim() && agent.state.toLowerCase() !== 'n/a' ? agent.state : 'N/A',
+      country: agent.countryCode && agent.countryCode.trim() && agent.countryCode.toLowerCase() !== 'n/a' ? agent.countryCode : 'N/A'
+    }));
+
+    res.status(200).json({
+      success: true,
+      count: agents.length,
+      pagination: {
+        total: totalAgents,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(totalAgents / limitNum)
+      },
+      data: agents
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server Error fetching agent details',
+      error: error.message
+    });
+  }
+};
+

@@ -3,7 +3,9 @@
    ============================================================ */
 
 const BusinessAPI = (() => {
-  const BASE_URL = 'http://localhost:5000/api/business';
+  const BASE_URL = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:5000/api/business'
+    : 'https://realestate-backend.onrender.com/api/business';
 
   async function request(url, options = {}) {
     try {
@@ -36,6 +38,20 @@ const BusinessAPI = (() => {
     });
     const qs = query.toString();
     return request(`${BASE_URL}${qs ? '?' + qs : ''}`);
+  }
+
+  /**
+   * GET /api/business/agents?page=&limit=&searchName=&searchState=&searchCompany=
+   */
+  function getAgents(params = {}) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        query.append(key, value);
+      }
+    });
+    const qs = query.toString();
+    return request(`${BASE_URL}/agents${qs ? '?' + qs : ''}`);
   }
 
   /**
@@ -110,6 +126,7 @@ const BusinessAPI = (() => {
     deleteBusiness,
     deleteAllBusinesses,
     uploadCSV,
+    getAgents,
   };
 })();
 

@@ -1023,3 +1023,21 @@ body {
 .text-accent-purple { color: var(--pastel-purple-dark); }
 .text-accent-green { color: var(--pastel-green-dark); }
 .text-accent-yellow { color: var(--pastel-yellow-dark); }
+
+.badge-n-a {
+  background-color: var(--pastel-pink);
+  color: var(--pastel-pink-dark);
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.45rem;
+  border-radius: 6px;
+  display: inline-block;
+}
+.email-link, .website-link {
+  color: var(--brand-primary);
+  font-weight: 500;
+  text-decoration: none;
+}
+.email-link:hover, .website-link:hover {
+  text-decoration: underline;
+}

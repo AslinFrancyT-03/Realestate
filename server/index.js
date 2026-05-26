@@ -45,6 +45,11 @@ app.get('/database', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/database.html'));
 });
 
+// Explicit route for agent details page
+app.get('/agents', (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/agents.html'));
+});
+
 // Catch-all route for any unhandled page request, serves the dashboard
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/index.html'));

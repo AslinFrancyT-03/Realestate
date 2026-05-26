@@ -11,7 +11,8 @@ const {
   updateBusiness,
   deleteBusiness,
   deleteAllBusinesses,
-  uploadCSV
+  uploadCSV,
+  getAgents
 } = require('../controllers/businessController');
 
 // Configure Multer Storage for file uploads
@@ -49,6 +50,9 @@ const upload = multer({
 router.route('/')
   .get(getBusinesses)
   .post(createBusiness);
+
+// GET AGENTS must be registered before standard /:id route
+router.get('/agents', getAgents);
 
 // DELETE ALL must be registered before standard /:id route
 router.delete('/delete-all', deleteAllBusinesses);
