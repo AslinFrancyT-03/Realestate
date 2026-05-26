@@ -213,6 +213,7 @@ body {
 .metric-card.accent-green::before  { background-color: var(--pastel-green-dark); }
 .metric-card.accent-yellow::before { background-color: var(--pastel-yellow-dark); }
 .metric-card.accent-pink::before   { background-color: var(--pastel-pink-dark); }
+.metric-card.accent-red::before    { background-color: var(--pastel-red-dark); }
 
 .metric-title {
   text-transform: uppercase;
@@ -246,6 +247,7 @@ body {
 .icon-green  { background-color: var(--pastel-green); color: var(--pastel-green-dark); }
 .icon-yellow { background-color: var(--pastel-yellow); color: var(--pastel-yellow-dark); }
 .icon-pink   { background-color: var(--pastel-pink); color: var(--pastel-pink-dark); }
+.icon-red    { background-color: var(--pastel-red); color: var(--pastel-red-dark); }
 
 /* ============================================================
    Premium Cards (Glass/Panel)

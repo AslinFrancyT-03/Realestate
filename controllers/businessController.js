@@ -1,6 +1,7 @@
 const fs = require('fs');
 const csv = require('csv-parser');
 const Business = require('../models/Business');
+const SystemStats = require('../models/SystemStats');
 
 // Duplicate checking helper (checks title, phone, website - ignoring empty values)
 const findDuplicate = async (title, phone, website, excludeId = null) => {
@@ -254,6 +255,10 @@ exports.getBusinesses = async (req, res) => {
     const allCategories = await Business.distinct('category');
     const activeCategories = allCategories.filter(cat => cat && cat.trim() && cat.toLowerCase() !== 'n/a');
 
+    // Fetch duplicates removed from SystemStats
+    const statsDoc = await SystemStats.findOne({ key: 'duplicatesRemoved' });
+    const duplicatesRemoved = statsDoc ? statsDoc.value : 0;
+
     res.status(200).json({
       success: true,
       count: listings.length,
@@ -270,7 +275,8 @@ exports.getBusinesses = async (req, res) => {
         totalCities: activeCities.length,
         averageRating,
         topRated,
-        topCategories
+        topCategories,
+        duplicatesRemoved
       },
       filterOptions: {
         states: activeStates.sort(),
@@ -451,6 +457,8 @@ exports.deleteBusiness = async (req, res) => {
 exports.deleteAllBusinesses = async (req, res) => {
   try {
     const result = await Business.deleteMany({});
+    // Reset duplicatesRemoved count to 0 in SystemStats
+    await SystemStats.updateOne({ key: 'duplicatesRemoved' }, { value: 0 }, { upsert: true });
     res.status(200).json({
       success: true,
       message: 'All records deleted successfully',
@@ -509,11 +517,12 @@ exports.uploadCSV = async (req, res) => {
 
           res.status(200).json({
             success: true,
-            message: `CSV parsing completed. Imported: ${importResult.imported}, Duplicates skipped: ${importResult.duplicates}, Errors: ${importResult.errors}`,
+            message: `CSV parsing completed. Imported: ${importResult.imported}, Duplicates skipped: ${importResult.duplicates}, Updated: ${importResult.updated}, Errors: ${importResult.errors}`,
             stats: {
               totalRows: results.length,
               imported: importResult.imported,
               duplicates: importResult.duplicates,
+              updated: importResult.updated,
               errors: importResult.errors
             }
           });
@@ -544,19 +553,77 @@ exports.uploadCSV = async (req, res) => {
   }
 };
 
+// Helper to clean and normalize string (case-insensitive, ignores multiple spaces)
+function normalizeString(str) {
+  if (!str || str.toLowerCase().trim() === 'n/a') return '';
+  return str.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Helper to clean phone numbers (removes all white spaces, dashes, etc.)
+function normalizePhone(phone) {
+  if (!phone || phone.toLowerCase().trim() === 'n/a') return '';
+  return phone.trim().toLowerCase().replace(/\s+/g, '').replace(/[-()]/g, '');
+}
+
+// Helper to clean websites (removes protocol http/https/www and trailing slashes)
+function cleanWebsite(web) {
+  if (!web || web.toLowerCase().trim() === 'n/a') return '';
+  let cleaned = web.trim().toLowerCase();
+  cleaned = cleaned.replace(/^(https?:\/\/)?(www\.)?/, '');
+  cleaned = cleaned.replace(/\/+$/, '');
+  return cleaned;
+}
+
+// Helper to check if a field is blank
+function isBlank(val) {
+  if (val === undefined || val === null) return true;
+  const str = String(val).trim().toLowerCase();
+  return str === '' || str === 'n/a' || str === 'not available';
+}
+
 /**
- * Import an array of raw CSV row objects into MongoDB.
- * Returns { imported, duplicates, errors }
+ * Import an array of raw CSV row objects into MongoDB with high-performance duplicate check and merging.
+ * Returns { imported, duplicates, updated, errors }
  */
 async function importCSVRows(results) {
   let importedCount = 0;
   let duplicateCount = 0;
+  let updatedCount = 0;
   let errorCount = 0;
 
-  // Batch duplicate tracking within the upload
-  const processedTitles = new Set();
-  const processedPhones = new Set();
-  const processedWebsites = new Set();
+  // In-memory indexing of existing database records
+  const existingDocs = await Business.find({}).lean();
+  
+  // Maps to quickly lookup existing database records
+  const dbWebsiteMap = new Map();
+  const dbNamePhoneMap = new Map();
+  const dbNameLocationMap = new Map();
+
+  for (const doc of existingDocs) {
+    const cleanWeb = cleanWebsite(doc.website);
+    if (cleanWeb) {
+      dbWebsiteMap.set(cleanWeb, doc);
+    }
+    const cleanTitle = normalizeString(doc.title);
+    const cleanPh = normalizePhone(doc.phone);
+    if (cleanTitle && cleanPh) {
+      dbNamePhoneMap.set(`${cleanTitle}|${cleanPh}`, doc);
+    }
+    const cleanCity = normalizeString(doc.city);
+    const cleanState = normalizeString(doc.state);
+    if (cleanTitle && cleanCity && cleanState) {
+      dbNameLocationMap.set(`${cleanTitle}|${cleanCity}|${cleanState}`, doc);
+    }
+  }
+
+  // Maps to track processed records within the current CSV batch (intra-batch deduplication)
+  const batchWebsiteMap = new Map();
+  const batchNamePhoneMap = new Map();
+  const batchNameLocationMap = new Map();
+
+  // Accumulators for bulk db operations
+  const bulkUpdates = [];
+  const newBusinesses = [];
 
   for (const row of results) {
     const cleanRow = normalizeRow(row);
@@ -567,46 +634,101 @@ async function importCSVRows(results) {
       continue;
     }
 
-    // Clean website string for batch duplicate check
-    const cleanWeb = biz.website.replace(/^(https?:\/\/)?(www\.)?/, '').replace(/\/$/, '');
+    const cleanWeb = cleanWebsite(biz.website);
+    const cleanTitle = normalizeString(biz.title);
+    const cleanPh = normalizePhone(biz.phone);
+    const cleanCity = normalizeString(biz.city);
+    const cleanState = normalizeString(biz.state);
 
-    // 1. Check duplicate within the incoming batch
-    const lowercaseTitle = biz.title.toLowerCase();
-    let isBatchDuplicate = processedTitles.has(lowercaseTitle);
-    if (biz.phone && biz.phone !== 'N/A' && processedPhones.has(biz.phone)) {
-      isBatchDuplicate = true;
-    }
-    if (cleanWeb && cleanWeb.toLowerCase() !== 'n/a' && processedWebsites.has(cleanWeb.toLowerCase())) {
-      isBatchDuplicate = true;
+    // 1. Check duplicate within the current CSV batch (intra-batch)
+    let batchMatch = null;
+    if (cleanWeb && batchWebsiteMap.has(cleanWeb)) {
+      batchMatch = batchWebsiteMap.get(cleanWeb);
+    } else if (cleanTitle && cleanPh && batchNamePhoneMap.has(`${cleanTitle}|${cleanPh}`)) {
+      batchMatch = batchNamePhoneMap.get(`${cleanTitle}|${cleanPh}`);
+    } else if (cleanTitle && cleanCity && cleanState && batchNameLocationMap.has(`${cleanTitle}|${cleanCity}|${cleanState}`)) {
+      batchMatch = batchNameLocationMap.get(`${cleanTitle}|${cleanCity}|${cleanState}`);
     }
 
-    if (isBatchDuplicate) {
+    if (batchMatch) {
+      // Duplicate in the batch, skip inserting. Update missing/blank fields of the first batch listing
+      const fields = ['email', 'address', 'website', 'brokerName', 'phone', 'state', 'countryCode', 'mobileNumber'];
+      fields.forEach(f => {
+        if (isBlank(batchMatch[f]) && !isBlank(biz[f])) {
+          batchMatch[f] = biz[f];
+        }
+      });
       duplicateCount++;
       continue;
     }
 
-    // 2. Check duplicate against MongoDB database
-    const dbDuplicate = await findDuplicate(biz.title, biz.phone, biz.website);
-    if (dbDuplicate) {
-      duplicateCount++;
+    // 2. Check duplicate against existing database records
+    let dbMatch = null;
+    if (cleanWeb && dbWebsiteMap.has(cleanWeb)) {
+      dbMatch = dbWebsiteMap.get(cleanWeb);
+    } else if (cleanTitle && cleanPh && dbNamePhoneMap.has(`${cleanTitle}|${cleanPh}`)) {
+      dbMatch = dbNamePhoneMap.get(`${cleanTitle}|${cleanPh}`);
+    } else if (cleanTitle && cleanCity && cleanState && dbNameLocationMap.has(`${cleanTitle}|${cleanCity}|${cleanState}`)) {
+      dbMatch = dbNameLocationMap.get(`${cleanTitle}|${cleanCity}|${cleanState}`);
+    }
+
+    if (dbMatch) {
+      // Duplicate exists in MongoDB. Update blank/missing fields
+      const fieldsToUpdate = {};
+      const fields = ['email', 'address', 'website', 'brokerName', 'phone', 'state', 'countryCode', 'mobileNumber'];
+      
+      fields.forEach(f => {
+        if (isBlank(dbMatch[f]) && !isBlank(biz[f])) {
+          dbMatch[f] = biz[f];
+          fieldsToUpdate[f] = biz[f];
+        }
+      });
+
+      if (Object.keys(fieldsToUpdate).length > 0) {
+        bulkUpdates.push({
+          updateOne: {
+            filter: { _id: dbMatch._id },
+            update: { $set: fieldsToUpdate }
+          }
+        });
+      }
+      updatedCount++;
       continue;
     }
 
-    // Add to batch tracking
-    processedTitles.add(lowercaseTitle);
-    if (biz.phone && biz.phone !== 'N/A') processedPhones.add(biz.phone);
-    if (cleanWeb && cleanWeb.toLowerCase() !== 'n/a') processedWebsites.add(cleanWeb.toLowerCase());
-
-    try {
-      await Business.create(biz);
-      importedCount++;
-    } catch (err) {
-      console.error(`Error importing row "${biz.title}":`, err.message);
-      errorCount++;
-    }
+    // 3. Unique record! Add to batch maps and insertion queue
+    newBusinesses.push(biz);
+    if (cleanWeb) batchWebsiteMap.set(cleanWeb, biz);
+    if (cleanTitle && cleanPh) batchNamePhoneMap.set(`${cleanTitle}|${cleanPh}`, biz);
+    if (cleanTitle && cleanCity && cleanState) batchNameLocationMap.set(`${cleanTitle}|${cleanCity}|${cleanState}`, biz);
+    
+    importedCount++;
   }
 
-  return { imported: importedCount, duplicates: duplicateCount, errors: errorCount };
+  // Execute database bulk operations
+  if (bulkUpdates.length > 0) {
+    await Business.bulkWrite(bulkUpdates);
+  }
+  if (newBusinesses.length > 0) {
+    await Business.insertMany(newBusinesses);
+  }
+
+  // Update SystemStats with total duplicates removed (skipped + updated)
+  const totalDuplicatesRemoved = duplicateCount + updatedCount;
+  if (totalDuplicatesRemoved > 0) {
+    await SystemStats.updateOne(
+      { key: 'duplicatesRemoved' },
+      { $inc: { value: totalDuplicatesRemoved } },
+      { upsert: true }
+    );
+  }
+
+  return { 
+    imported: importedCount, 
+    duplicates: duplicateCount, 
+    updated: updatedCount, 
+    errors: errorCount 
+  };
 }
 
 /**

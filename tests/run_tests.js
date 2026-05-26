@@ -1,13 +1,19 @@
 const assert = require('assert').strict;
+const dns = require('dns');
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
 
+// Fix DNS resolution for MongoDB Atlas SRV records on some networks
+dns.setServers(['8.8.8.8', '8.8.4.4']);
+
 // We will load local dotenv config
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
+process.env.MONGODB_URI = 'mongodb://localhost:27017/businessListingDB_test';
 
 const connectDB = require('../config/db');
 const Business = require('../models/Business');
+const SystemStats = require('../models/SystemStats');
 
 const PORT = 5055;
 const BASE_URL = `http://localhost:${PORT}`;
@@ -33,6 +39,7 @@ async function runTests() {
     // 3. Clear Database to start clean
     console.log('\n[1/7] Cleaning Database...');
     await Business.deleteMany({});
+    await SystemStats.deleteMany({});
     
     // Verify count is 0
     let res = await fetch(`${BASE_URL}/api/business`);
@@ -191,12 +198,29 @@ async function runTests() {
     assert.equal(json.data[0].companyName, 'Co-Working Spaces LLC');
     console.log('✓ Agent Details search/filters verified.');
 
-    // 8. Test CSV Upload mock (using a boundary payload or endpoint integration checks)
-    console.log('\n[6/7] Testing CSV Import Flow...');
+    // 8. Test CSV Upload mock and Deduplication Flow
+    console.log('\n[6/7] Testing CSV Import & Deduplication Flow...');
     const testCsvPath = path.join(__dirname, 'test_upload.csv');
-    fs.writeFileSync(testCsvPath, 'title,brokerName,phone,website,address,email,totalScore,reviewsCount,street,city,state,countryCode\nBatch Biz 3,Agent Carter,+111222,www.carter.com,12 Park Ave,carter@re.com,4.5,10,12 Park Ave,Chicago,IL,USA\n');
     
-    // We will simulate form data upload
+    // Construct a CSV with 6 rows:
+    // Row 1: New unique inserted. (Unique Biz 1)
+    // Row 2: Skipped (duplicate of Row 1 by website).
+    // Row 3: New unique inserted. (Unique Biz 2)
+    // Row 4: Skipped (duplicate of Row 3 by website), but merges email2@test.com into Row 3.
+    // Row 5: Matches existing DB record (Real Estate Pros Ltd by website). Counts as updated existing.
+    // Row 6: Matches existing DB record (Independent Broker by name + location). Website is merged into the DB record.
+    const csvContent = 
+      'title,brokerName,phone,website,address,email,totalScore,reviewsCount,street,city,state,countryCode\n' +
+      'Unique Biz 1,Broker A,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA\n' +
+      'Unique Biz 1,Broker A,12345,www.unique1.com,Addr 1,email1@test.com,4.5,5,Street 1,City 1,ST,USA\n' +
+      'Unique Biz 2,Broker B,,www.unique2.com,Addr 2,,4.0,2,Street 2,City 2,ST,USA\n' +
+      'Unique Biz 2,Broker B,,www.unique2.com,Addr 2,email2@test.com,4.0,2,Street 2,City 2,ST,USA\n' +
+      'Real Estate Pros Ltd,John Doe,+1234567890,www.repros.com,123 Ocean Drive Miami FL USA,,4.8,15,123 Ocean Drive,Miami,FL,USA\n' +
+      'Independent Broker,Jane Smith,,www.jane-website.com,,,4.2,8,456 Mountain Pass,Denver,CO,USA\n';
+      
+    fs.writeFileSync(testCsvPath, csvContent);
+    
+    // Simulate form data upload
     const FormData = require('form-data');
     const form = new FormData();
     form.append('csvFile', fs.createReadStream(testCsvPath));
@@ -214,11 +238,37 @@ async function runTests() {
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.body.success, true);
-    assert.equal(res.body.stats.imported, 1);
+    
+    // Assert summary stats:
+    // Total rows: 6, Unique imported: 2, Duplicates skipped: 2, Updated existing: 2
+    assert.equal(res.body.stats.totalRows, 6);
+    assert.equal(res.body.stats.imported, 2);
+    assert.equal(res.body.stats.duplicates, 2);
+    assert.equal(res.body.stats.updated, 2);
     
     // Clean up temporary test file
     fs.unlinkSync(testCsvPath);
-    console.log('✓ CSV upload and integration verified.');
+    console.log('✓ CSV upload duplicate report counts verified.');
+
+    // Verify fields merge in MongoDB:
+    res = await fetch(`${BASE_URL}/api/business`);
+    json = await res.json();
+    
+    // 1. Verify Unique Biz 2 has its email merged (from Row 4 into Row 3)
+    const unique2 = json.data.find(b => b.title === 'Unique Biz 2');
+    assert.ok(unique2);
+    assert.equal(unique2.email, 'email2@test.com');
+    console.log('✓ In-batch duplicate field merging verified.');
+    
+    // 2. Verify Independent Broker has its website merged from CSV (since it was empty in DB)
+    const janeBroker = json.data.find(b => b.title === 'Independent Broker');
+    assert.ok(janeBroker);
+    assert.equal(janeBroker.website, 'www.jane-website.com');
+    console.log('✓ Existing DB record duplicate field merging verified.');
+
+    // 3. Verify that duplicatesRemoved count is now 4 (2 skipped + 2 updated) in global stats
+    assert.equal(json.stats.duplicatesRemoved, 4);
+    console.log('✓ Global duplicatesRemoved metric card count verified.');
 
     // 9. Test Delete Dataset
     console.log('\n[7/7] Testing Delete Dataset Flow...');

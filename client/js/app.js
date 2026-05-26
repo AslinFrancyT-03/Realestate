@@ -67,6 +67,19 @@ document.addEventListener('DOMContentLoaded', () => {
     deleteAllModalObj = new bootstrap.Modal(deleteAllModalEl);
   }
 
+  // Duplicates Removed & CSV Upload Summary elements
+  const statDuplicates = document.getElementById('statDuplicates');
+  const summaryTotalRows = document.getElementById('summaryTotalRows');
+  const summaryInserted = document.getElementById('summaryInserted');
+  const summarySkipped = document.getElementById('summarySkipped');
+  const summaryUpdated = document.getElementById('summaryUpdated');
+
+  const uploadSummaryModalEl = document.getElementById('uploadSummaryModal');
+  let uploadSummaryModalObj = null;
+  if (uploadSummaryModalEl) {
+    uploadSummaryModalObj = new bootstrap.Modal(uploadSummaryModalEl);
+  }
+
   // --- Initial Load ---
   loadData();
 
@@ -111,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (statStates) statStates.textContent = stats.totalStates.toLocaleString();
     if (statCities) statCities.textContent = stats.totalCities.toLocaleString();
     if (statRating) statRating.textContent = stats.averageRating > 0 ? stats.averageRating.toFixed(1) : '0.0';
+    if (statDuplicates) statDuplicates.textContent = (stats.duplicatesRemoved || 0).toLocaleString();
   }
 
   // --- Render Top Rated Widget ---
@@ -584,10 +598,21 @@ document.addEventListener('DOMContentLoaded', () => {
         if (result.success) {
           showToast(
             'Import Successful', 
-            `Imported: ${result.stats.imported}, Duplicates skipped: ${result.stats.duplicates}`, 
+            `CSV has been successfully parsed and verified!`, 
             'success'
           );
           clearFileSelection();
+          
+          // Populate the summary report modal
+          if (summaryTotalRows) summaryTotalRows.textContent = result.stats.totalRows.toLocaleString();
+          if (summaryInserted) summaryInserted.textContent = result.stats.imported.toLocaleString();
+          if (summarySkipped) summarySkipped.textContent = result.stats.duplicates.toLocaleString();
+          if (summaryUpdated) summaryUpdated.textContent = (result.stats.updated || 0).toLocaleString();
+          
+          // Launch the summary modal
+          if (uploadSummaryModalObj) {
+            uploadSummaryModalObj.show();
+          }
           
           // Refresh table and stats
           state.page = 1;

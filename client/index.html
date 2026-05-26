@@ -54,8 +54,8 @@
   <div class="main-content">
 
     <!-- Metric Cards -->
-    <div class="row g-3 mb-4">
-      <div class="col-sm-6 col-xl-3">
+    <div class="row g-3 mb-4 row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-xl-5">
+      <div class="col">
         <div class="metric-card accent-blue">
           <div class="d-flex align-items-center justify-content-between">
             <div>
@@ -68,7 +68,7 @@
           </div>
         </div>
       </div>
-      <div class="col-sm-6 col-xl-3">
+      <div class="col">
         <div class="metric-card accent-purple">
           <div class="d-flex align-items-center justify-content-between">
             <div>
@@ -81,7 +81,7 @@
           </div>
         </div>
       </div>
-      <div class="col-sm-6 col-xl-3">
+      <div class="col">
         <div class="metric-card accent-green">
           <div class="d-flex align-items-center justify-content-between">
             <div>
@@ -94,7 +94,7 @@
           </div>
         </div>
       </div>
-      <div class="col-sm-6 col-xl-3">
+      <div class="col">
         <div class="metric-card accent-yellow">
           <div class="d-flex align-items-center justify-content-between">
             <div>
@@ -103,6 +103,19 @@
             </div>
             <div class="metric-icon-wrapper icon-yellow">
               <i class="fa-solid fa-star"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="metric-card accent-red">
+          <div class="d-flex align-items-center justify-content-between">
+            <div>
+              <div class="metric-title">Duplicates Removed</div>
+              <div class="metric-value" id="statDuplicates">0</div>
+            </div>
+            <div class="metric-icon-wrapper icon-red">
+              <i class="fa-solid fa-copy"></i>
             </div>
           </div>
         </div>
@@ -282,6 +295,47 @@
           <button type="button" class="btn btn-danger-premium" id="confirmDeleteAllBtn">
             <i class="fa-solid fa-trash-can"></i> Yes, Delete All
           </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================= UPLOAD SUMMARY MODAL ========================= -->
+  <div class="modal fade" id="uploadSummaryModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="fa-solid fa-square-poll-vertical me-2 text-accent-green"></i>CSV Import Summary</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <div class="d-flex flex-column gap-3">
+            <div class="p-3 rounded-3 bg-light border">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-bold" style="color:var(--text-secondary);">Total CSV Rows:</span>
+                <span class="badge bg-secondary fs-6" id="summaryTotalRows">0</span>
+              </div>
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-bold text-success">Unique Records Inserted:</span>
+                <span class="badge bg-success fs-6" id="summaryInserted">0</span>
+              </div>
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <span class="fw-bold text-danger">Duplicate Records Skipped:</span>
+                <span class="badge bg-danger fs-6" id="summarySkipped">0</span>
+              </div>
+              <div class="d-flex justify-content-between align-items-center">
+                <span class="fw-bold text-primary">Updated Existing Records:</span>
+                <span class="badge bg-primary fs-6" id="summaryUpdated">0</span>
+              </div>
+            </div>
+            <div class="alert alert-info d-flex align-items-center gap-2 mb-0 py-2">
+              <i class="fa-solid fa-circle-info text-primary"></i>
+              <span class="fs-8">Duplicates were identified based on website, name + phone, and name + location. Missing fields in existing entries were auto-merged!</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-premium" data-bs-dismiss="modal">Close Summary</button>
         </div>
       </div>
     </div>

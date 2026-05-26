@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const statStates = document.getElementById('statStates');
   const statCities = document.getElementById('statCities');
   const statRating = document.getElementById('statRating');
+  const statDuplicates = document.getElementById('statDuplicates');
   const topCategoriesContainer = document.getElementById('topCategoriesContainer');
 
   // Exports
@@ -115,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (statStates) statStates.textContent = stats.totalStates.toLocaleString();
     if (statCities) statCities.textContent = stats.totalCities.toLocaleString();
     if (statRating) statRating.textContent = stats.averageRating > 0 ? stats.averageRating.toFixed(1) : '0.0';
+    if (statDuplicates) statDuplicates.textContent = (stats.duplicatesRemoved || 0).toLocaleString();
 
     if (topCategoriesContainer) {
       if (!stats.topCategories || stats.topCategories.length === 0) {
